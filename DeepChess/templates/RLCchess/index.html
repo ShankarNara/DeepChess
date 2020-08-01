@@ -1,0 +1,36 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html>
+<head>
+	<title>DeepChess</title>
+
+	<script src="/static/js/chessboard-0.3.0.js"></script>
+    <link rel="stylesheet" href="/static/css/chessboard-0.3.0.min.css">
+
+<!--  Including jQuery, another tool chessboardjs uses:-->
+	<!-- <img src="/static/img/chesspieces/wikipedia/bB.png" alt="You are under his genjutsu!" /> -->
+    <script src="https://code.jquery.com/jquery-1.12.4.min.js"></script>
+  
+</head>
+<body>
+	<h1>Hello Peeps!</h1><br/>
+
+	<p>Let's build this chess game to perfection!</p>
+	<div id="board1" style="width: 400px"></div>
+</body>
+
+	<script >
+		
+		 var config = {
+	    position: 'start',
+	    draggable: true,
+	    orientation: 'black',
+	    dropOffBoard: 'snapback',
+	    sparePieces: 'true'
+	  }
+
+	  var pos1 = 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R'
+	  var board1 = ChessBoard('board1', config);
+	</script>
+</html>
