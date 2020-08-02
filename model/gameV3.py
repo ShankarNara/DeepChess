@@ -1,3 +1,4 @@
+
 #---------------------------------------- IMPORTS
 import numpy as np # linear algebra
 import pandas as pd 
@@ -16,18 +17,38 @@ import numpy as np
 from RLC.real_chess.tree import Node
 import math
 import gc 
-#-----------------------------------------------
-from django.shortcuts import render,render_to_response
-from django.http import HttpResponse
-from django.template import RequestContext
-#------------------------------------------------
 
-#-----------------------------------------CLASSES
-import random
+import pickle
+#--------------------------------------- INITIALIZATIONS
+opponent = agent.GreedyAgent()
+env = environment.Board(opponent, FEN=None)
+player = agent.Agent(lr=0.001, network='big')
+player.fix_model()
+learner = learn.TD_search(env, player, gamma=0.8, search_time=1.5)
+node = tree.Node(learner.env.board, gamma=learner.gamma)
 
-def random_player(board):
-    move = random.choice(list(board.legal_moves))
-    return move.uci()
+w_before = learner.agent.model.get_weights()
+n_iters = 105
+
+gamma = 0.9
+search_time=60
+min_sim_count=10
+temperature=1
+
+#parameters to be passed to object of AIPlayer
+model = tf.keras.models.load_model('RLC_model.h5')
+env = environment.Board(opponent, FEN=None)
+node = tree.Node(learner.env.board, gamma=learner.gamma)
+
+
+#----------------------------------------- FUNCTIONS
+
+def display_board(board, use_svg):
+    if use_svg:
+        return board._repr_svg_()
+    else:
+        return "<pre>" + str(board) + "</pre>"
+
 
 class RandomAgent(object):
 
@@ -282,34 +303,40 @@ def sigmoid(x):
 class TD_search_m(object):
 
     def __init__(self, env, agent, gamma=0.9, search_time=1, memsize=2000, batch_size=256, temperature=1):
-    	global tree
+        """
+        Chess algorithm that combines bootstrapped monte carlo tree search with Q Learning
+        Args:
+            env: RLC chess environment
+            agent: RLC chess agent
+            gamma: discount factor
+            search_time: maximum time spent doing tree search
+            memsize: Amount of training samples to keep in-memory
+            batch_size: Size of the training batches
+            temperature: softmax temperature for mcts
+        """
+        self.env = env
+        self.agent = agent
+        self.tree = Node(self.env)
+        self.gamma = gamma
+        self.memsize = memsize
+        self.batch_size = batch_size
+        self.temperature = temperature
+        self.reward_trace = []  # Keeps track of the rewards
+        self.piece_balance_trace = []  # Keep track of the material value on the board
+        self.ready = False  # Whether to start training
+        self.search_time = search_time
+        self.min_sim_count = 10
 
-    	self.env = env
-    	self.agent = agent
-    	self.tree = Node(self.env)
-    	self.gamma = gamma
-    	self.memsize = memsize
-    	self.batch_size = batch_size
-    	self.temperature = temperature
-    	self.reward_trace = []
-    	self.piece_balance_trace = []
-    	self.ready = False  
-    	self.search_time = search_time
-    	self.min_sim_count = 10
-
-    	self.mem_state = np.zeros(shape=(1, 8, 8, 8))
-    	self.mem_sucstate = np.zeros(shape=(1, 8, 8, 8))
-    	self.mem_reward = np.zeros(shape=(1))
-    	self.mem_error = np.zeros(shape=(1))
-    	self.mem_episode_active = np.ones(shape=(1))
-    	self.turnnow=False
-
-    	tree = Node(env.board, gamma=gamma)  # Initialize the game tree
+        self.mem_state = np.zeros(shape=(1, 8, 8, 8))
+        self.mem_sucstate = np.zeros(shape=(1, 8, 8, 8))
+        self.mem_reward = np.zeros(shape=(1))
+        self.mem_error = np.zeros(shape=(1))
+        self.mem_episode_active = np.ones(shape=(1))
 
     #def display_board(self):
      #   return "<pre>" + str(self.env.board) + "</pre>"
         
-    def play_game(self, k, maxiter=80,human_move="null"):
+    def play_game(self, k, maxiter=80):
         """
         Play a chess game and learn from it
         Args:
@@ -319,86 +346,102 @@ class TD_search_m(object):
         Returns:
             board: Chess environment on terminal state
         """
-       
+        episode_end = False
+        turncount = 0
+        tree = Node(self.env.board, gamma=self.gamma)  # Initialize the game tree
 
-        state = np.expand_dims(self.env.layer_board.copy(), axis=0)
-        state_value = self.agent.predict(state)
+        # Play a game of chess
+        # According to test.py - Decides the best max_move and max_value using MCTS
+            
+        while not episode_end:
+            state = np.expand_dims(self.env.layer_board.copy(), axis=0)
+            state_value = self.agent.predict(state)
 
-        
-        # White's turn involves tree-search
-        if self.env.board.turn:
+            # board_stop = display_board(self.env.board,"svg")
+            # html = "%s" % (board_stop)
+            # clear_output(wait=True)
+            # display(HTML(html))
+            time.sleep(1)
+            
+            # White's turn involves tree-search
+            if self.env.board.turn:
 
-            # Do a Monte Carlo Tree Search after game iteration k
-            start_mcts_after = -1
-            if k > start_mcts_after:
-                tree = self.mcts(tree)
-                # Step the best move
+                # Do a Monte Carlo Tree Search after game iteration k
+                start_mcts_after = -1
+                if k > start_mcts_after:
+                    tree = self.mcts(tree)
+                    # Step the best move
+                    max_move = None
+                    max_value = np.NINF
+                    for move, child in tree.children.items():
+                        sampled_value = np.mean(child.values)
+                        if sampled_value > max_value:
+                            max_value = sampled_value
+                            max_move = move
+                else:
+                    max_move = np.random.choice([move for move in self.env.board.generate_legal_moves()])
+
+            # Black's turn is myopic
+            # According to test.py - uses greedy approach to decide the
+            # best max_move, and its corresponding max_value
+            else:
                 max_move = None
                 max_value = np.NINF
-                for move, child in tree.children.items():
-                    sampled_value = np.mean(child.values)
-                    if sampled_value > max_value:
-                        max_value = sampled_value
-                        max_move = move
-            else:
-                max_move = np.random.choice([move for move in self.env.board.generate_legal_moves()])
+                
+                st = input()
+                move = chess.Move.from_uci(st)
+                max_move = move
+                
+            uci = max_move.uci();
+            daf = str(max_move)
+            print(daf)
+            print(type(daf))
+                
+            if not (self.env.board.turn and max_move not in tree.children.keys()) or not k > start_mcts_after:
+                tree.children[max_move] = Node(gamma=0.9, parent=tree)
 
-        # Black's turn is myopic
-        # According to test.py - uses greedy approach to decide the
-        # best max_move, and its corresponding max_value
-        else:
-        	max_move=human_move
-       # uci = max_move.uci();
-       #daf is the string version of the move to be made.
-        daf = str(max_move)
-        print(daf)
-        print(type(daf))
-            
-        if not (self.env.board.turn and max_move not in tree.children.keys()) or not k > start_mcts_after:
-            tree.children[max_move] = Node(gamma=0.9, parent=tree)
+            episode_end, reward = self.env.step(max_move)
 
-        episode_end, reward = self.env.step(max_move)
-
-        tree = tree.children[max_move]
-        tree.parent = None
-        gc.collect()
-
-        sucstate = np.expand_dims(self.env.layer_board, axis=0)
-        new_state_value = self.agent.predict(sucstate)
-
-        error = reward + self.gamma * new_state_value - state_value
-        error = np.float(np.squeeze(error))
-
-        turncount += 1
-        if turncount > maxiter and not episode_end:
-            episode_end = True
-
-        episode_active = 0 if episode_end else 1
-
-        # construct training sample state, prediction, error
-        self.mem_state = np.append(self.mem_state, state, axis=0)
-        self.mem_reward = np.append(self.mem_reward, reward)
-        self.mem_sucstate = np.append(self.mem_sucstate, sucstate, axis=0)
-        self.mem_error = np.append(self.mem_error, error)
-        self.reward_trace = np.append(self.reward_trace, reward)
-        self.mem_episode_active = np.append(self.mem_episode_active, episode_active)
-
-        if self.mem_state.shape[0] > self.memsize:
-            self.mem_state = self.mem_state[1:]
-            self.mem_reward = self.mem_reward[1:]
-            self.mem_sucstate = self.mem_sucstate[1:]
-            self.mem_error = self.mem_error[1:]
-            self.mem_episode_active = self.mem_episode_active[1:]
+            tree = tree.children[max_move]
+            tree.parent = None
             gc.collect()
 
-        if turncount % 10 == 0:
-            self.update_agent()
+            sucstate = np.expand_dims(self.env.layer_board, axis=0)
+            new_state_value = self.agent.predict(sucstate)
+
+            error = reward + self.gamma * new_state_value - state_value
+            error = np.float(np.squeeze(error))
+
+            turncount += 1
+            if turncount > maxiter and not episode_end:
+                episode_end = True
+
+            episode_active = 0 if episode_end else 1
+
+            # construct training sample state, prediction, error
+            self.mem_state = np.append(self.mem_state, state, axis=0)
+            self.mem_reward = np.append(self.mem_reward, reward)
+            self.mem_sucstate = np.append(self.mem_sucstate, sucstate, axis=0)
+            self.mem_error = np.append(self.mem_error, error)
+            self.reward_trace = np.append(self.reward_trace, reward)
+            self.mem_episode_active = np.append(self.mem_episode_active, episode_active)
+
+            if self.mem_state.shape[0] > self.memsize:
+                self.mem_state = self.mem_state[1:]
+                self.mem_reward = self.mem_reward[1:]
+                self.mem_sucstate = self.mem_sucstate[1:]
+                self.mem_error = self.mem_error[1:]
+                self.mem_episode_active = self.mem_episode_active[1:]
+                gc.collect()
+
+            if turncount % 10 == 0:
+                self.update_agent()
 
         piece_balance = self.env.get_material_value()
         self.piece_balance_trace.append(piece_balance)
         print("game ended with result", reward, "and material balance", piece_balance, "in", turncount, "halfmoves")
 
-        return daf
+        return self.env.board
 
     def update_agent(self):
         """
@@ -537,78 +580,24 @@ class TD_search_m(object):
 
         return node
 
-#-----------------------------------------ALL VIEW FUNCTIONS
+player1 = Agent_AI(model,lr=0.001, network='big')
+player1.fix_model()
 
-def index(request):
-	global turncount, learner
+gamma = 0.9
+search_time=60
+min_sim_count=10
+temperature=1
 
-	context = RequestContext(request)
+#parameters to be passed to object of AIPlayer
+model = tf.keras.models.load_model('RLC_model.h5')
+env = environment.Board(opponent, FEN=None)
+node = tree.Node(learner.env.board, gamma=learner.gamma)
 
-	opponent = agent.GreedyAgent()
-	env = environment.Board(opponent, FEN=None)
-	player = agent.Agent(lr=0.001, network='big')
-	player.fix_model()
-	learner = learn.TD_search(env, player, gamma=0.8, search_time=1.5)
-	node = tree.Node(learner.env.board, gamma=learner.gamma)
+learner = TD_search_m(env, player1, gamma=0.8, search_time=1.5)
 
-	w_before = learner.agent.model.get_weights()
-	n_iters = 105
+env.board.reset()
+#learner.play_game(1)
 
-	gamma = 0.9
-	search_time=60
-	min_sim_count=10
-	temperature=1
-
-	#parameters to be passed to object of AIPlayer
-	model = tf.keras.models.load_model('/Users/shankar99/Documents/open-source/deepChess/final/code/DeepChess/RLCchess/RLC_model.h5')
-	env = environment.Board(opponent, FEN=None)
-	node = tree.Node(learner.env.board, gamma=learner.gamma)
-
-	player1 = Agent_AI(model,lr=0.001, network='big')
-	player1.fix_model()
-
-	#parameters to be passed to object of AIPlayer
-	turncount = 0
-
-
-	learner = TD_search_m(env, player1, gamma=0.8, search_time=1.5)
-
-	env.board.reset()
-
-	return render_to_response('RLCchess/index.html',{},context)
-
-def play_game(request):
-	context = RequestContext(request)
-
-	context_dict={}
-
-	#get the move from template using data through URL 
-	# parse it if needed
-
-	#if learner.turnnow is true it is humans turn so just return
-	if learner.turnnow:
-		cur_move = request.GET.get('move')
-		cur_move=str(cur_move)
-
-		cur_step = chess.Move.from_uci(cur_move)
-		learner.env.step(cur_step)
-		boolVal = learner.turnnow
-		learner.turnnow = not learner.turnnow
-		return render_to_response('RLCchess/play_game.html',{'turn': boolVal},context)
-	
-	cur_move = random_player(learner.env.board)
-	cur_move = str(cur_move)
-
-	cur_move = cur_move[:2]+"-"+cur_move[2:]
-	context_dict['turn'] = learner.turnnow
-	#cur_move="e2-e4"
-	print("cur_move : ",cur_move)
-	context_dict['move'] = cur_move
-	learner.turnnow = not learner.turnnow
-
-	return render_to_response('RLCchess/play_game.html',context_dict,context)
-
-
-
-#----------------------------------------------------------------------
-
+pickle_out = open("model1.pickle","wb")
+pickle.dump(learner,pickle_out)
+pickle_out.close()

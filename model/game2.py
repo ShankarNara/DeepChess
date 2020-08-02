@@ -395,7 +395,7 @@ class TD_search_m(object):
             uci = max_move.uci();
             daf = str(max_move)
             print(daf)
-            print(type(daf))
+            print(type(max_move))
                 
             if not (self.env.board.turn and max_move not in tree.children.keys()) or not k > start_mcts_after:
                 tree.children[max_move] = Node(gamma=0.9, parent=tree)
