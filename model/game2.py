@@ -49,12 +49,6 @@ def display_board(board, use_svg):
     else:
         return "<pre>" + str(board) + "</pre>"
 
-from keras.layers import Input, Dense, Flatten, Concatenate, Conv2D, Dropout
-from keras.losses import mean_squared_error
-from keras.models import Model, clone_model, load_model
-from keras.optimizers import SGD, Adam, RMSprop
-import numpy as np
-
 
 class RandomAgent(object):
 
@@ -297,12 +291,6 @@ class Agent_AI(object):
         return td_errors
 
 
-import numpy as np
-import time
-from RLC.real_chess.tree import Node
-import math
-import gc
-
 
 def softmax(x, temperature=1):
     return np.exp(x / temperature) / np.sum(np.exp(x / temperature))
@@ -405,7 +393,9 @@ class TD_search_m(object):
                 max_move = move
                 
             uci = max_move.uci();
-            print(max_move)
+            daf = str(max_move)
+            print(daf)
+            print(type(daf))
                 
             if not (self.env.board.turn and max_move not in tree.children.keys()) or not k > start_mcts_after:
                 tree.children[max_move] = Node(gamma=0.9, parent=tree)
